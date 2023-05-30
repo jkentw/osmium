@@ -18,8 +18,9 @@ typedef unsigned long int size_t;
 #include "interrupts.h"
 #include "isr.h"
 #include "keyboard.h"
+#include "driver_pci.h"
 
-#define TERMINAL_ROWS 20 //20 rows of 16 bytes
+#define TERMINAL_ROWS 16 //16 rows of 16 bytes
 
 int cursorRow = 0; //32 columns to account for 2 hex digits per byte
 int cursorCol = 0;
@@ -28,6 +29,7 @@ uint8_t hexBuffer[TERMINAL_ROWS * 16 * 2 + 1]; //account for null space
 uint8_t asciiBuffer[TERMINAL_ROWS * 16 + 1]; //account for null space
 uint8_t commandBuffer[32 + 1]; //account for null space
 uint8_t statusBuffer[32 + 1]; //account for null space
+uint8_t extraBuffer[80*4 + 1]; //account for null space
 uint8_t selectedBuffer = 0; //0 for hex, 1 for ascii, 2 for command
 
 uint32_t memLocation = 0x7000;
@@ -63,7 +65,7 @@ void updateDisplay(void) {
 	}
 	printRaw(line);
 	
-	//lines 4-23
+	//lines 4 to (3+TERMINAL_ROWS)
 	for(int i = 0; i < TERMINAL_ROWS; i++) {
 		line[0] = ' ';
 		intToHexStr(&line[1], memRow + i * 16, 8);
@@ -95,14 +97,20 @@ void updateDisplay(void) {
 		line[79] = ' ';	
 		printRaw(line);
 	}
-		
+	
+	//lines (4+TERMINAL_ROWS) to 23
+	for(int i = 0; i < 4; i++) {
+		strncpy_safe(line, &extraBuffer[i*80], 80);
+		printRaw(line);
+	}
+
 	//line 24
-	strncpy_safe(line, " Commands: (goto <hex address>), (call <hex address>).", 54);
-	for(int i = 54; i < 80; i++) {
+	strncpy_safe(line, " Commands: goto <addr16>; call <addr16>; pciEnum <addr16> <count10>", 67);
+	for(int i = 67; i < 80; i++) {
 		line[i] = ' ';
 	}
 	printRaw(line);
-	
+
 	//line 25
 	line[0] = '>';
 	line[1] = ' ';
@@ -135,10 +143,10 @@ void updateDisplay(void) {
 
 void updateMemory(void) {
 	//The terminal program runs in the address range of
-	//0x7800 to 0xA800. It has been made read-only to avoid 
+	//0x7800 to 0xB800. It has been made read-only to avoid 
 	//unintentional writes from viewing the range.
-	if(memLocation >= 0x7800 && memLocation < 0xA800)
-		return;
+	//if(memLocation >= 0x7800 && memLocation < 0xB800)
+	//	return;
 	
 	if(selectedBuffer == 0) { //hex buffer
 		for(int i = 0; i < 16 * TERMINAL_ROWS; i++) {
@@ -159,6 +167,9 @@ void processCommand(void) {
 	int address;
 	int addressOffset;
 	int addressLength;
+	int arg;
+	int argOffset;
+	int argLength;
 	uint8_t shouldParseAddress = 0;
 	uint8_t commandId = 0;
 	uint8_t isGood = 1;
@@ -181,6 +192,10 @@ void processCommand(void) {
 	}
 	else if(strncmp(commandBuffer, "call", cmpLength) == 0) {
 		commandId = 2;
+		shouldParseAddress = 1;
+	}
+	else if(strncmp(commandBuffer, "pciEnum", cmpLength) == 0) {
+		commandId = 3;
 		shouldParseAddress = 1;
 	}
 	
@@ -222,6 +237,54 @@ void processCommand(void) {
 		else if(commandId == 2) {
 			strncpy_safe(statusBuffer, "[call successful]", 17);
 			((void (*)(void))address)();
+		}
+		else if(commandId == 3) {
+			//bypass spaces
+			while(commandBuffer[commandLength] <= 0x20 && commandLength < 32) {
+				commandLength++;
+			}
+			
+			//start of 1st argument
+			argOffset = commandLength;
+			
+			//get number of decimal digits
+			while(commandBuffer[commandLength] >= '0' &&
+			  commandBuffer[commandLength] <= '9' &&
+			  commandLength < 32) {
+				commandLength++;
+			}
+			
+			argLength = commandLength - argOffset;
+			
+			//invalid literal
+			if(argLength == 0 || commandBuffer[commandLength] > 0x20) {
+				strncpy_safe(statusBuffer, "[Invalid args; must be base 10]", 31);
+				isGood = 0;
+			}
+			else { //parse decimal
+				arg = decStrToInt(&commandBuffer[argOffset], argLength);
+			}
+
+			if(isGood) {
+				int numFn = pciEnumerate((uint16_t *) address, arg);
+
+				char tmp[6];
+				intToDecStr(tmp, numFn, 5);
+
+				strncpy_safe(statusBuffer, "[pciEnum successful (", 21);
+				strncpy_safe(statusBuffer + 21, tmp, 5);
+				strncpy_safe(statusBuffer + 26, ")]", 2);
+
+				//temporary tests
+				intToHexStr(extraBuffer, pciConfigReadInt8(0, 0, 0, PCI_HDR_VENDOR_ID), 2);
+				extraBuffer[2] = ' ';
+				intToHexStr(&extraBuffer[3], pciConfigReadInt16(0, 0, 0, PCI_HDR_VENDOR_ID), 4);
+				extraBuffer[7] = ' ';
+				intToHexStr(&extraBuffer[8], pciConfigReadInt16(0, 0, 0, PCI_HDR_REVISION_ID), 8);
+				extraBuffer[16] = ' ';
+
+				//end of tests
+			}
 		}
 		else {
 			strncpy_safe(statusBuffer, "[Invalid command.]", 18);
@@ -358,6 +421,12 @@ void _start(void) {
 	pic_init();
 	keyboard_init(keyboardHandler);
 	strncpy_safe(statusBuffer, "[J. Kent Wirant, 2022]", 22);
+	
+	for(int i = 0; i < 320; i++) {
+		extraBuffer[i] = ' ';
+	}
+
+	extraBuffer[320] = 0;
 	updateDisplay();
 	while(1); //hang
 }

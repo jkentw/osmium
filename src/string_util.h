@@ -40,4 +40,11 @@ void intToHexStr(char *dest, int val, int n);
 //input is assumed to be valid.
 int hexStrToInt(const char *src, int n);
 
+//converts integer to decimal string with n digits and null at the end 
+void intToDecStr(char *dest, int val, int n);
+
+//parses integer from decimal string with n digits. 
+//input is assumed to be valid.
+int decStrToInt(const char *src, int n);
+
 #endif

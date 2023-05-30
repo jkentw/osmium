@@ -36,7 +36,7 @@ void x86_outw(uint16_t port, uint16_t data) {
 }
 
 void x86_outd(uint16_t port, uint32_t data) {
-	asm volatile ("out %%ax, %%dx" : : "a" (data), "d" (port) : "memory");
+	asm volatile ("out %%eax, %%dx" : : "a" (data), "d" (port) : "memory");
 }
 
 //referenced https://wiki.osdev.org/Model_Specific_Registers

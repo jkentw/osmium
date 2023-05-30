@@ -69,3 +69,26 @@ int hexStrToInt(const char *src, int n) {
 	
 	return val;
 }
+
+void intToDecStr(char *dest, int val, int n) {
+	int rem;
+	dest[n] = 0;
+	
+	while(n > 0) {
+		n--;
+		rem = val % 10;
+		val /= 10;
+		dest[n] = rem + '0'; 
+	}
+}
+
+int decStrToInt(const char *src, int n) {
+	int val = 0;
+	
+	for(int i = 0; i < n; i++) {
+		val *= 10;
+		val += src[i] - '0';
+	}
+	
+	return val;
+}

@@ -1,6 +1,6 @@
-; J. Kent Wirant
-; 14 Dec. 2022
-; ECE 1895 - Project 3
+; Author: J. Kent Wirant
+; Last modified: 07 Jul. 2023
+; Osmium
 ; Bootloader
 
 section .text
@@ -29,14 +29,21 @@ start_boot:
 	mov fs, ax
 	mov gs, ax
 	
+	; boot drive is stored in dll; save it for later
+	push dx
+	
 	; print boot message
 	mov si, str_boot
 	call print_str
 	
+	; put default string at destination address of second sector (debugging)
+	mov si, str_stage2
+	mov dword [si], 0x00205820 ; " X "
+	
 	; load second stage into memory
 	mov ebx, 1 		; start from second sector (first is index 0)
 	mov cx, 60		; read 60 sectors
-	mov dl, 0x80	; hard disk drive 0 (boot drive)
+	pop dx			; select boot drive
 	mov si, 0x7E00	; destination address
 	call read_disk
 	

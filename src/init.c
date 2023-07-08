@@ -1,6 +1,6 @@
 /* J. Kent Wirant
- * 20 Dec. 2022
- * ECE 1895 - Project 3
+ * Updated: May 30, 2023
+ * osmium
  * init.c
  * Description:
  *   This code is called directly by the bootloader. It initializes the 

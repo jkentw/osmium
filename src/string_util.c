@@ -1,6 +1,6 @@
 /* J. Kent Wirant
  * 20 Dec. 2022
- * ECE 1895 - Project 3
+ * osmium
  * string_util.c
  * Description: Custom string functions somewhat resembling those in
  *   ANSI C string library.

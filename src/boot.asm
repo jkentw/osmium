@@ -1,7 +1,10 @@
 ; Author: J. Kent Wirant
-; Last modified: 07 Jul. 2023
+; Last modified: 18 Jul. 2023
 ; Osmium
 ; Bootloader
+
+; if needed, change macro values to troubleshoot
+%define INT_13H_EXT_SUPPORTED 1
 
 section .text
 	global start_boot ; name of entry point
@@ -17,6 +20,11 @@ bits 16
 ; source code utilizes for loading the second stage and for status reporting.
 ; =============================================================================
 
+; BIOS Parameter Block reserved space
+jmp start_boot
+times (3 - $ + $$) db 0x90
+times 0x3B db 0x00
+
 ; entry point of bootloader
 start_boot:
 	; setup
@@ -29,13 +37,11 @@ start_boot:
 	mov fs, ax
 	mov gs, ax
 	
-	; boot drive is stored in dll; save it for later
-	push dx
-	
 	; print boot message
 	mov si, str_boot
 	call print_str
 	
+%if INT_13H_EXT_SUPPORTED
 	; put default string at destination address of second sector (debugging)
 	mov si, str_stage2
 	mov dword [si], 0x00205820 ; " X "
@@ -43,9 +49,18 @@ start_boot:
 	; load second stage into memory
 	mov ebx, 1 		; start from second sector (first is index 0)
 	mov cx, 60		; read 60 sectors
-	pop dx			; select boot drive
 	mov si, 0x7E00	; destination address
 	call read_disk
+
+%else	
+	; load second stage into memory (compatibility version)
+	mov al, 60		; number of sectors to read
+	mov bx, 0x7E00	; destination address
+	mov cx, 0x0002	; cylinder 0 and sector 2
+	mov dh, 0		; head number 0
+	call read_disk_compat
+	
+%endif
 	
 	; print message and begin stage 2
 	mov si, str_stage2
@@ -81,6 +96,7 @@ print_str:
 	popf
 	ret
 	
+%if INT_13H_EXT_SUPPORTED
 ; -----------------------------------------------------------------------------
 ; Reads a specified number of 512-byte disk sectors into memory.
 ; EBX - LBA of first sector to read
@@ -94,8 +110,8 @@ read_disk:
 	
 	; populate disk address packet
 	mov [disk_address_packet_len], cx
-	lea eax, [ds:si]
-	mov [disk_address_packet_mem], eax
+	mov [disk_address_packet_mem], si ; note: this has two 16-bit fields (seg. and offs.)
+	mov [disk_address_packet_mem + 2], ds
 	mov [disk_address_packet_lba], ebx
 	
 	; load interrupt arguments
@@ -116,6 +132,38 @@ read_disk:
 	popa
 	popf
 	ret
+
+%else
+; -----------------------------------------------------------------------------
+; Reads a specified number of 512-byte disk sectors into memory.
+; NOTE: A sector number of 0 is invalid; i.e. allowed values are 1-63.
+; AL - number of sectors to read
+; CL - cylinder number (bits 0-7)
+; CH - sector number (bits 0-5) and cylinder number (bits 8-9, mapped to 6-7)
+; DL - drive number (e.g. 1st HDD is 0x80)
+; DH - head number
+; ES:BX - address to write to
+; https://en.wikipedia.org/wiki/INT_13H#INT_13h_AH=02h:_Read_Sectors_From_Drive
+read_disk_compat:
+	pushf
+	push ax
+	
+	mov ah, 0x02 	; Function number for Read Sectors from Drive
+	int 0x13		; call BIOS to read disk sectors into memory
+	
+	; if no error, exit function, otherwise print error message and hang
+	jnc .success
+	mov si, str_err_read
+	call print_str
+	cli
+	hlt
+	
+.success:
+	pop ax
+	popf
+	ret
+	
+%endif
 	
 	
 ; DATA AND VARIABLES ----------------------------------------------------------
@@ -123,10 +171,13 @@ read_disk:
 str_boot:					db 'Booting OS...', 13, 10, 0
 str_err_read:				db 'Disk read error!', 13, 10, 0
 
+%if INT_13H_EXT_SUPPORTED
+align 8
 disk_address_packet: 		db 0x10, 0		; size of DAP followed by 0
 disk_address_packet_len:	dw 0			; number of sectors to read
 disk_address_packet_mem:	dd 0			; destination address of read
 disk_address_packet_lba:	dq 0			; logical block address
+%endif
 
 ; BOOT SIGNATURE --------------------------------------------------------------
 

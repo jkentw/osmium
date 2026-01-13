@@ -28,14 +28,15 @@ times 0x3B db 0x00
 ; entry point of bootloader
 start_boot:
 	; setup
-	cli 				; disable interrupts
-	mov sp, 0x7A00		; set up stack (grows downward)
-	xor ax, ax			; set segment registers (except cs) to 0 
-	mov ss, ax
+	cli 						; disable interrupts
+	mov [boot_drive_num], dl	; save boot drive
+	xor ax, ax					; set segment registers (except cs) to 0 
 	mov ds, ax
 	mov es, ax
 	mov fs, ax
 	mov gs, ax
+	mov ss, ax
+	mov sp, 0x7A00				; set up stack (grows downward)
 	
 	; print boot message
 	mov si, str_boot
@@ -48,8 +49,9 @@ start_boot:
 	
 	; load second stage into memory
 	mov ebx, 1 		; start from second sector (first is index 0)
-	mov cx, 60		; read 60 sectors
+	mov cx, 60		; number of sectors to read
 	mov si, 0x7E00	; destination address
+	mov dl, [boot_drive_num]
 	call read_disk
 
 %else	
@@ -58,6 +60,7 @@ start_boot:
 	mov bx, 0x7E00	; destination address
 	mov cx, 0x0002	; cylinder 0 and sector 2
 	mov dh, 0		; head number 0
+	mov dl, [boot_drive_num]
 	call read_disk_compat
 	
 %endif
@@ -169,7 +172,8 @@ read_disk_compat:
 ; DATA AND VARIABLES ----------------------------------------------------------
 
 str_boot:					db 'Booting OS...', 13, 10, 0
-str_err_read:				db 'Disk read error!', 13, 10, 0
+str_err_read:				db 'Disk read error:', 13, 10, 0
+boot_drive_num:				db 0
 
 %if INT_13H_EXT_SUPPORTED
 align 8
@@ -179,9 +183,14 @@ disk_address_packet_mem:	dd 0			; destination address of read
 disk_address_packet_lba:	dq 0			; logical block address
 %endif
 
+; PARTITION TABLE--------------------------------------------------------------
+
+times (446 - $ + $$) db 00 ; padding (signature is present in last two bytes)
+
 ; BOOT SIGNATURE --------------------------------------------------------------
 
-times (510 - $ + $$) db 00 ; padding (signature is present in last two bytes)
+times 64 db 00
+
 dw 0xAA55 ; signature of bootable drive
 
 ; ======== SECOND STAGE =======================================================

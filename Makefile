@@ -7,17 +7,18 @@
 #    to ensure compatibility with your system's binaries. Add nasm to your system's PATH variable. 
 
 # file paths
-SRC_PATH = ./src
-BUILD_PATH = ./build
+SRC_PATH 		:= ./src
+BUILD_PATH 		:= ./build
 
 # tools
-AS 			:= nasm 
-ASFLAGS		:= -f elf
+AS 				:= nasm 
+ASFLAGS			:= -f elf
 # change the path below to point to your own cross compiler build
 # (see  for help)
-CC 			:= ~/applications/cross_compiler/bin/i686-elf-gcc 
-CFLAGS 		+= -ffreestanding -mno-red-zone -O0 
-LD_FLAGS 	:= -Ttext 0x7C00 -nostartfiles -nostdlib
+CC 				:= ~/applications/cross_compiler/bin/i686-elf-gcc 
+CFLAGS 			+= -ffreestanding -mno-red-zone -O0 
+LD_FLAGS 		:= -Ttext 0x7C00 -nostartfiles -nostdlib
+OBJCOPY_FLAGS 	:= -O binary --pad-to 0x10000
 
 # C object files, but isr.c requires special flag; handle separately
 C_OBJS 		:= $(patsubst $(SRC_PATH)/%.c,$(BUILD_PATH)/%.o,$(wildcard $(SRC_PATH)/*.c))
@@ -30,7 +31,7 @@ ASM_OBJS	:= $(patsubst $(SRC_PATH)/%.asm,$(BUILD_PATH)/%.o,$(wildcard $(SRC_PATH
 # Binary kernel image
 $(BUILD_PATH)/kernel.bin: $(C_OBJS) $(ASM_OBJS) $(BUILD_PATH)/isr.o
 	$(CC) -o $(BUILD_PATH)/kernel.elf $(CFLAGS) $(LD_FLAGS) $(wildcard $(BUILD_PATH)/*.o)
-	objcopy -O binary $(BUILD_PATH)/kernel.elf $(BUILD_PATH)/kernel.bin
+	objcopy $(OBJCOPY_FLAGS) $(BUILD_PATH)/kernel.elf $(BUILD_PATH)/kernel.bin
 	rm $(BUILD_PATH)/kernel.elf
 
 

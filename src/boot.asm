@@ -1,7 +1,6 @@
 ; Author: J. Kent Wirant
-; Last modified: 18 Jul. 2023
-; Osmium
-; Bootloader
+; osmium
+; boot.asm
 
 ; if needed, change macro values to troubleshoot
 %define INT_13H_EXT_SUPPORTED 1

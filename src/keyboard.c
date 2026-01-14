@@ -1,6 +1,5 @@
 /* J. Kent Wirant
- * 19 Dec. 2022
- * ECE 1895 - Project 3
+ * osmium
  * keyboard.c
  * Description: PS/2 keyboard driver plus enabling A20.
  */
@@ -16,39 +15,41 @@
 
 #define KEYBOARD_CMD_QUEUE_SIZE 16
 
-const uint16_t DATA_PORT = 0x60;
-const uint16_t CMD_STAT_PORT = 0x64;
+typedef uint8_t char_t;
 
-const uint8_t RESPONSE_ERR0              = 0x00;
-const uint8_t RESPONSE_SELF_TEST_PASSED  = 0xAA;
-const uint8_t RESPONSE_ECHO              = 0xEE;
-const uint8_t RESPONSE_ACK               = 0xF0;
-const uint8_t RESPONSE_SELF_TEST_FAILED0 = 0xFC;
-const uint8_t RESPONSE_SELF_TEST_FAILED1 = 0xFD;
-const uint8_t RESPONSE_RESEND            = 0xFE;
-const uint8_t RESPONSE_ERR1              = 0xFF;
+static const uint16_t DATA_PORT = 0x60;
+static const uint16_t CMD_STAT_PORT = 0x64;
 
-//for scan code set 1
-enum KeyboardState {
-	STATE_START,
-	STATE_AWAITING_RESPONSE,
-	STATE_EXTENDED_CODE,
-	STATE_PRTSC_PR1,
-	STATE_PRTSC_PR2,
-	STATE_PRTSC_RL1,
-	STATE_PRTSC_RL2,
-	STATE_PAUSE,
-	STATE_PAUSE_PR,
-	STATE_PAUSE_RL
-} keyboardState = STATE_START;
+static const uint8_t RESPONSE_ERR0              = 0x00;
+static const uint8_t RESPONSE_SELF_TEST_PASSED  = 0xAA;
+static const uint8_t RESPONSE_ECHO              = 0xEE;
+static const uint8_t RESPONSE_ACK               = 0xF0;
+static const uint8_t RESPONSE_SELF_TEST_FAILED0 = 0xFC;
+static const uint8_t RESPONSE_SELF_TEST_FAILED1 = 0xFD;
+static const uint8_t RESPONSE_RESEND            = 0xFE;
+static const uint8_t RESPONSE_ERR1              = 0xFF;
 
-struct Command {
+static char_t state_start(uint8_t scancode);
+static char_t state_extendedCode(uint8_t scancode);
+static char_t state_pause(uint8_t scancode);
+static char_t state_pausePr(uint8_t scancode);
+static char_t state_pauseRl(uint8_t scancode);
+static char_t state_prtscPr1(uint8_t scancode);
+static char_t state_prtscPr2(uint8_t scancode);
+static char_t state_prtscRl1(uint8_t scancode);
+static char_t state_prtscRl2(uint8_t scancode);
+static char_t state_error(uint8_t scancode);
+
+typedef char_t (*KeyboardState)(uint8_t);
+KeyboardState keyboardState = state_start;
+
+static struct Command {
 	enum CommandID cmdId;
 	uint8_t data;
 };
 
 //uses scan code set 1
-char scanCodeTable[] = {
+static char_t scanCodeTable[] = {
 	0x00, 0x1B, '1',  '2',
 	'3',  '4',  '5',  '6',
 	'7',  '8',  '9',  '0',
@@ -99,7 +100,7 @@ char scanCodeTable[] = {
 	0x96, 0x97, 0x00, 0x00  //0x6C
 };
 
-char shiftTable[] = {
+static char_t shiftTable[] = {
 	0x00, 0x1B, '!',  '@',
 	'#',  '$',  '%',  '^',
 	'&',  '*',  '(',  ')',
@@ -129,10 +130,10 @@ char shiftTable[] = {
  *   bit 9 - set if Right Alt is down
  *   bits 10 to 15 - reserved; should be clear
  */
-uint16_t keyFlags = 0;
+static uint16_t keyFlags = 0;
 
 //callback function
-void (*keyEventHandler)(uint8_t c, uint8_t keyCode, uint16_t flags) = 0;
+void (*keyEventHandler)(char_t c, uint8_t keyCode, uint16_t flags) = 0;
 
 struct Command cmdQueue[KEYBOARD_CMD_QUEUE_SIZE];
 uint32_t queueStart = 0;
@@ -143,10 +144,9 @@ uint8_t keyboard_queueCommand(enum CommandID id, uint8_t data);
 void processScanCode(uint8_t scancode);
 void tryCommand(void);
 uint8_t keyboard_checkInput(void);
-void keyboard_init(void (*handler)(uint8_t, uint8_t, uint16_t));
+void keyboard_init(void (*handler)(char_t, uint8_t, uint16_t));
 
 //returns true if sucessfully added to queue. Does not validate command.
-//automatically tries to execute (next) command if possible
 uint8_t keyboard_queueCommand(enum CommandID id, uint8_t data) {
 	//if queue is not full, assign new element
 	uint8_t hasRoom = (queueLength < KEYBOARD_CMD_QUEUE_SIZE);
@@ -159,113 +159,200 @@ uint8_t keyboard_queueCommand(enum CommandID id, uint8_t data) {
 		queueLength++;
 	}
 	
-	//attempt to process first command in the queue
-	tryCommand();
 	return hasRoom;
 }
 
-void processScanCode(uint8_t scancode) {
-	uint8_t c = 0;
+static char_t state_start(uint8_t scancode) {
+	switch(scancode) {
+		case 0xE0:
+			keyboardState = state_extendedCode;
+			break;
+		case 0xE1:
+			keyboardState = state_pause;
+			break;
+		default:
+			return scanCodeTable[scancode & 0x7F];
+	}
+	return 0;
+}
+
+//TODO: implement await state
+static char_t state_awaitingResponse(uint8_t scancode) {
+	keyboardState = state_start;
+}
+
+static char_t state_extendedCode(uint8_t scancode) {
+	switch(scancode) {
+		case 0x2A:
+			keyboardState = state_prtscPr1;
+			break;
+		case 0xB7:
+			keyboardState = state_prtscRl1;
+			break;
+		default:
+			keyboardState = state_start;
+			return scanCodeTable[(scancode & 0x7F) + 0x50];
+	}
+	return 0;
+}
+
+static char_t state_pause(uint8_t scancode) {
+	switch(scancode) {
+		case 0x1D:
+			keyboardState = state_pausePr;
+			break;
+		case 0x9D:
+			keyboardState = state_pauseRl;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_pausePr(uint8_t scancode) {
+	switch(scancode) {
+		case 0x45:
+			//pause press event
+			keyboardState = state_start;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_pauseRl(uint8_t scancode) {
+	switch(scancode) {
+		case 0xC5:
+			//pause release event
+			keyboardState = state_start;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_prtscPr1(uint8_t scancode) {
+	switch(scancode) {
+		case 0xE0:
+			keyboardState = state_prtscPr2;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_prtscRl1(uint8_t scancode) {
+	switch(scancode) {
+		case 0xE0:
+			keyboardState = state_prtscRl2;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_prtscPr2(uint8_t scancode) {
+	switch(scancode) {
+		case 0x37:
+			//print screen pressed event
+			keyboardState = state_start;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_prtscRl2(uint8_t scancode) {
+	switch(scancode) {
+		case 0xAA:
+			//print screen released event
+			keyboardState = state_start;
+			break;
+		default:
+			keyboardState = state_error;
+	}
+	return 0;
+}
+
+static char_t state_error(uint8_t scancode) {
+	keyboardState = state_start;
+	return 0;
+}
+
+static int isCapsLockActive() {
+	return (keyFlags & 2) != 0;
+}
+
+static int isShiftActive() {
+	return (keyFlags & 48) != 0; //R or L shift
+}
+
+static int isReleased() {
+	return (keyFlags & 1) == 0;
+}
+
+static int isPressed() {
+	return (keyFlags & 1) == 1;
+}
+
+static void updateFlags(char_t c, uint8_t scancode) {
 	int bit = 0;
+
+	if(c == 0x06) bit = 1; //CAPS lock
+	else if(c == 0x03) bit = 4; //left shift
+	else if(c == 0x04) bit = 5; //right shift
+	else if(c == 0x02) bit = 6; //left control
+	else if(c == 0x1E) bit = 7; //right control
+	else if(c == 0x05) bit = 8; //left alt
+	else if(c == 0x1F) bit = 9; //right alt
 	
-	//state transitions
-	if(keyboardState == STATE_START) {
-		if(scancode == 0xE0) {
-			keyboardState = STATE_EXTENDED_CODE;
-		} 
-		else if(scancode == 0xE1) {
-			keyboardState = STATE_PAUSE;
-		}
-		else {
-			keyboardState = STATE_START;
-			c = scanCodeTable[scancode & 0x7F];
-		}
-	} 
-	else if(keyboardState == STATE_EXTENDED_CODE) {
-		if(scancode == 0x2A) {
-			keyboardState = STATE_PRTSC_PR1;
-		}
-		else if(scancode == 0xB7) {
-			keyboardState = STATE_PRTSC_RL1;
-		}
-		else {
-			keyboardState = STATE_START;
-			c = scanCodeTable[(scancode & 0x7F) + 0x50];
-		}
-	}
-	else if(keyboardState == STATE_PAUSE) {
-		if(scancode == 0x1D) {
-			keyboardState = STATE_PAUSE_PR;
-		}
-		else if(scancode == 0x45) {
-			keyboardState = STATE_PAUSE_RL;
-		}
-		else {
-			keyboardState = STATE_START;
-		}
-	}
-	else if(keyboardState == STATE_PRTSC_PR1 && scancode == 0xE0) {
-		keyboardState = STATE_PRTSC_PR2;
-	}
-	else if(keyboardState == STATE_PRTSC_RL1 && scancode == 0xE0) {
-		keyboardState = STATE_PRTSC_RL2;
-	}
-	else if(keyboardState == STATE_PAUSE_PR && scancode == 0x45) {
-		keyboardState = STATE_START;
-	}
-	else if(keyboardState == STATE_PAUSE_RL && scancode == 0xC5) {
-		keyboardState = STATE_START;
-	}
-	else if(keyboardState == STATE_PRTSC_PR2 && scancode == 0x37) {
-		keyboardState = STATE_START;
-	}
-	else if(keyboardState == STATE_PRTSC_RL2 && scancode == 0xAA) {
-		keyboardState = STATE_START;
-	}
-	else {
-		keyboardState = STATE_START;
-	}
+	//pressed/released flag
+	keyFlags &= ~1;
+	keyFlags |= ~(scancode >> 7) & 1;
 	
-	//process key only if the keyboard state permits it
-	if(keyboardState == STATE_START) {
-		if(c == 0x06) bit = 1; //CAPS lock
-		else if(c == 0x03) bit = 4; //left shift
-		else if(c == 0x04) bit = 5; //right shift
-		else if(c == 0x02) bit = 6; //left control
-		else if(c == 0x1E) bit = 7; //right control
-		else if(c == 0x05) bit = 8; //left alt
-		else if(c == 0x1F) bit = 9; //right alt
+	//set or clear appropriate bit in keyFlags
+	if(bit >= 4) {
+		if(scancode & 0x80) keyFlags &= ~(1 << bit); //released
+		else keyFlags |= (1 << bit); //pressed
+	}
+	else if(bit >= 1 && (scancode & 0x80) == 0) { //lock-type keys (toggle-based)
+		keyFlags ^= (1 << bit);
+	}
+}
+
+static char_t applyKeyModifiers(char_t c, uint8_t scancode) {
+	//switch letter to uppercase if (CAPS LOCK) XOR (R OR L shift)
+	if(c >= 'a' && c <= 'z' && (isCapsLockActive() ^ isShiftActive())) {
+		c &= ~0x20;
+	}
+	else if(scancode < 0x36 && isShiftActive()) { //if R OR L shift is pressed
+		c = shiftTable[scancode & 0x7F];
+	}
+	return c;
+}
+
+void processScanCode(uint8_t scancode) {
+	char_t c = keyboardState(scancode);
+	
+	//process key only if the state has a valid output
+	if(c != 0) {
+		updateFlags(c, scancode);
 		
-		//pressed/released flag
-		keyFlags &= ~1;
-		keyFlags |= ~(scancode >> 7) & 1;
-		
-		//set or clear appropriate bit in keyFlags
-		if(bit >= 4) {
-			if(scancode & 0x80) keyFlags &= ~(1 << bit); //released
-			else keyFlags |= (1 << bit); //pressed
-		}
-		else if(bit >= 1 && (scancode & 0x80) == 0) { //lock-type keys (toggle-based)
-			keyFlags ^= (1 << bit);
-		}
-		
-		//if a character was pressed, send it to the handler
-		if((scancode & 0x80) == 0 && keyEventHandler != 0) {
-			//switch letter to uppercase if (CAPS LOCK) XOR (R OR L shift)
-			if(c >= 'a' && c <= 'z' && (((keyFlags & 2) != 0) ^ ((keyFlags & 48) != 0))) {
-				c &= ~0x20;
-			}
-			else if(scancode < 0x36 && (keyFlags & 48)) { //if R OR L shift is pressed
-				c = shiftTable[scancode & 0x7F];
-			}
-			
+		if(keyEventHandler != 0 && isPressed()) {
+			c = applyKeyModifiers(c, scancode);
 			keyEventHandler(c, scancode, keyFlags);
 		}
 	}
 }
 
 void tryCommand(void) {
-	if(keyboardState != STATE_START) //only process command when ready
+	if(keyboardState != state_start) //only process command when ready
 		return;
 	
 	if(queueLength > 0) {
@@ -276,7 +363,7 @@ void tryCommand(void) {
 			//does not work as intended yet
 			case CMD_SCAN_CODE_SET:
 				//set scan code set to 1
-				keyboardState = STATE_AWAITING_RESPONSE;	
+				keyboardState = state_awaitingResponse;	
 				x86_outb(DATA_PORT, 0xF0);
 				x86_outb(DATA_PORT, 0x01);	
 				break;
@@ -293,8 +380,8 @@ uint8_t keyboard_checkInput(void) {
 		uint8_t data = x86_inb(DATA_PORT);
 		
 		//NOTE: command response is not fully tested
-		if(keyboardState == STATE_AWAITING_RESPONSE) {
-			keyboardState = STATE_START; //no longer awaiting response
+		if(keyboardState == state_awaitingResponse) {
+			keyboardState = state_start; //no longer awaiting response
 			
 			if(data == RESPONSE_ACK) { //if acknowledged, remove cmd from queue		
 				queueLength--;
@@ -305,7 +392,7 @@ uint8_t keyboard_checkInput(void) {
 			} 
 			else {
 				//return to start state for robustness	
-				keyboardState = STATE_START;
+				keyboardState = state_start;
 			}
 				
 			/* no action needed yet for:
@@ -325,11 +412,11 @@ uint8_t keyboard_checkInput(void) {
 	return isFull;
 }
 
-void keyboard_init(void (*handler)(uint8_t, uint8_t, uint16_t)) {
+void keyboard_init(void (*handler)(char_t, uint8_t, uint16_t)) {
 	//TODO: reset keyboard & check status
 	
 	keyEventHandler = handler;
-	keyboardState = STATE_START;
+	keyboardState = state_start;
 	
 	//TODO: enable A20
 }
